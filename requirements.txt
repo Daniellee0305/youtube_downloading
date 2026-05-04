@@ -1,0 +1,10 @@
+# Python dependencies (install with: pip install -r requirements.txt)
+yt-dlp>=2025.3
+customtkinter>=5.2
+Pillow>=10.0
+
+# System dependency (NOT a pip package — install separately):
+# ffmpeg  — required for audio extraction & video merging
+#   Windows : https://www.gyan.dev/ffmpeg/builds/  (add to PATH)
+#   macOS   : brew install ffmpeg
+#   Linux   : sudo apt install ffmpeg
