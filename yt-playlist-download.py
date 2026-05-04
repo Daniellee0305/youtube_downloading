@@ -5,7 +5,7 @@ flexible folder + file naming templates, and detailed progress.
 Built with CustomTkinter + yt-dlp.
 """
 
-import os, re, threading, io, glob
+import os, sys, re, threading, io, glob
 import urllib.request
 import customtkinter as ctk
 from PIL import Image
@@ -15,8 +15,16 @@ import yt_dlp
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
-FF = "Segoe UI"
-MF = "Consolas"
+if sys.platform.startswith("win"):
+    FF = "Segoe UI"
+    MF = "Consolas"
+elif sys.platform == "darwin":
+    FF = "SF Pro"
+    MF = "Menlo"
+else:
+    FF = "Ubuntu"
+    MF = "Ubuntu Mono"
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # THEMES
@@ -31,6 +39,22 @@ def _t(swatch, bg, s1, s2, brd, acc, ach, ac2, tx, td, ok, er, wr,
             "tag_bg":tb,"tag_text":tt}
 
 THEMES = {
+    "Ubuntu": _t("#E95420","#2C001E","#3E0C2E","#4A0F37","#5E1345",
+                 "#E95420","#D94A1A","#F27649","#FFFFFF","#BDBDBD",
+                 "#2E8B57","#C7162B","#F2B705",
+                 "#3E0C2E","#450D33","#4A0F37","#5E1345","#5E1345","#F27649"),
+    "Arch": _t("#1793D1","#1E2226","#282C31","#32363C","#41454B",
+               "#1793D1","#1480B5","#4CB4E6","#F0F0F0","#A0A0A0",
+               "#42D783","#E64C4C","#E6D74C",
+               "#282C31","#2D3136","#32363C","#1A4B6B","#1E5478","#4CB4E6"),
+    "Pop!_OS": _t("#48B9C7","#333136","#424046","#4D4B51","#5C5A60",
+                  "#48B9C7","#3FA1AD","#68C6D3","#F6F6F6","#B3B3B3",
+                  "#8FF0A4","#FF7772","#FBD40A",
+                  "#424046","#46444A","#4D4B51","#365F66","#3D6C75","#68C6D3"),
+    "Mint": _t("#87A556","#1D2021","#282828","#32302F","#3C3836",
+               "#87A556","#7A954E","#A1B977","#EBDBB2","#A89984",
+               "#B8BB26","#FB4934","#FABD2F",
+               "#282828","#2D2D2D","#32302F","#394528","#42522C","#A1B977"),
     "Light": _t("#007aff","#ffffff","#f5f5f7","#eeeeef","#d2d2d7",
                 "#007aff","#0066d6","#34aadc","#1d1d1f","#86868b",
                 "#248a3d","#d70015","#b25000",
@@ -51,24 +75,13 @@ THEMES = {
                  "#ff6f3c","#ff8a5c","#ffb340","#f5f5f7","#86868b",
                  "#30d158","#ff453a","#ffd60a",
                  "#140e0b","#1a1210","#261a14","#2e1a10","#2e1e14","#ffb340"),
-    "Rose": _t("#ff375f","#080406","#140c10","#1e1218","#301a24",
-               "#ff375f","#ff6482","#ff6baf","#f5f5f7","#86868b",
-               "#30d158","#ff453a","#ffd60a",
-               "#140c10","#1a1014","#26161e","#2e1020","#2e1424","#ff6baf"),
-    "Lavender": _t("#bf5af2","#060408","#120e18","#1a1422","#281e36",
-                   "#bf5af2","#d07ff8","#da8fff","#f5f5f7","#86868b",
-                   "#30d158","#ff453a","#ffd60a",
-                   "#120e18","#16101e","#201828","#241838","#221636","#da8fff"),
-    "Forest": _t("#30d158","#040804","#0a140a","#101e10","#1a2e1a",
-                 "#30d158","#54e07a","#66e8a0","#f5f5f7","#86868b",
-                 "#30d158","#ff453a","#ffd60a",
-                 "#0a140a","#0e1a0e","#142414","#0e2e16","#102e18","#66e8a0"),
-    "Arctic": _t("#007aff","#f5f5f7","#ffffff","#f0f0f2","#d2d2d7",
-                 "#007aff","#0066d6","#147ce5","#1d1d1f","#86868b",
-                 "#248a3d","#d70015","#b25000",
-                 "#ffffff","#fafafa","#f0f0f2","#e0ecfa","#e8eef8","#0055b3"),
 }
-DEFAULT_THEME = "Midnight"
+if sys.platform.startswith("win"):
+    DEFAULT_THEME = "Ocean"
+elif sys.platform == "darwin":
+    DEFAULT_THEME = "Midnight"
+else:
+    DEFAULT_THEME = "Ubuntu"
 
 # ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -350,7 +363,7 @@ class App(ctk.CTk):
             font=ctk.CTkFont(family=FF,size=11),
             text_color=t["text_dim"]).pack(side="left",padx=(0,4))
 
-        self.dest_var=ctk.StringVar(value=os.path.join(os.getcwd(),"Downloads"))
+        self.dest_var=ctk.StringVar(value=os.path.join(os.path.expanduser("~"), "Downloads"))
         ctk.CTkEntry(bot_row,textvariable=self.dest_var,height=30,
             font=ctk.CTkFont(family=FF,size=12),fg_color=t["surface2"],
             border_color=t["border"],text_color=t["text"],corner_radius=8
@@ -631,10 +644,10 @@ class App(ctk.CTk):
         path=""
         if self.use_pl_folder.get():
             fp=preview(self.pl_folder_var.get(),pl=self._pl_title)
-            path+=sanitize(fp)+"/"
+            path+=sanitize(fp)+os.sep
         if self.use_ep_folder.get():
             ep=preview(self.ep_folder_var.get(),pl=self._pl_title)
-            path+=sanitize(ep)+"/"
+            path+=sanitize(ep)+os.sep
         self.preview_lbl.configure(text=f"→  {path}{file_p}.{ext}")
 
     def _on_folder(self):
@@ -695,7 +708,7 @@ class App(ctk.CTk):
 
     def _browse(self):
         f=filedialog.askdirectory()
-        if f: self.dest_var.set(f)
+        if f: self.dest_var.set(os.path.normpath(f))
 
     # ── Fetch ────────────────────────────────────────────────────────────────
 
@@ -899,7 +912,7 @@ class App(ctk.CTk):
 
     def _build_outtmpl(self, count, row_index=None):
         """Build the yt-dlp outtmpl string from user templates."""
-        base=self.dest_var.get().strip() or os.path.join(os.getcwd(),"Downloads")
+        base=self.dest_var.get().strip() or os.path.join(os.path.expanduser("~"), "Downloads")
         parts=[base]
 
         def replace_vars(s, idx):
