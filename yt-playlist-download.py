@@ -5,15 +5,18 @@ flexible folder + file naming templates, and detailed progress.
 Built with CustomTkinter + yt-dlp.
 """
 
-import os, sys, re, threading, io, glob
+import os, sys, re, threading, io, glob, shutil, subprocess
 import urllib.request
 import customtkinter as ctk
 from PIL import Image
 from tkinter import filedialog, messagebox
 import yt_dlp
 
-ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
+
+
+def _appearance_for_theme(name):
+    return "light" if name == "Light" else "dark"
 
 if sys.platform.startswith("win"):
     FF = "Segoe UI"
@@ -24,6 +27,25 @@ elif sys.platform == "darwin":
 else:
     FF = "Ubuntu"
     MF = "Ubuntu Mono"
+
+
+def _find_ffmpeg_dir():
+    ff = shutil.which("ffmpeg")
+    if ff:
+        return os.path.dirname(os.path.abspath(ff))
+    if sys.platform.startswith("win"):
+        pattern = os.path.join(
+            os.environ.get("LOCALAPPDATA", ""),
+            "Microsoft", "WinGet", "Packages",
+            "Gyan.FFmpeg_*", "ffmpeg-*-full_build", "bin",
+        )
+        for bin_dir in sorted(glob.glob(pattern), reverse=True):
+            if os.path.isfile(os.path.join(bin_dir, "ffmpeg.exe")):
+                return bin_dir
+    return None
+
+
+FFMPEG_DIR = _find_ffmpeg_dir()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -266,16 +288,83 @@ class App(ctk.CTk):
         self._theme=DEFAULT_THEME
         self._t=THEMES[DEFAULT_THEME]
         self._cancel_download=False
+        ctk.set_appearance_mode(_appearance_for_theme(DEFAULT_THEME))
         self.configure(fg_color=self._t["bg"])
         self._build()
+        if not FFMPEG_DIR:
+            self.after(500, lambda: messagebox.showwarning(
+                "ffmpeg not found",
+                "ffmpeg/ffprobe are required for audio extraction and video merging.\n\n"
+                "Windows: winget install Gyan.FFmpeg\n"
+                "Or download from https://www.gyan.dev/ffmpeg/builds/ and add to PATH.",
+            ))
+
+    def _theme_snapshot(self):
+        if not hasattr(self, "url_entry"):
+            return {}
+        snap = {
+            "url": self.url_entry.get(),
+            "dest": self.dest_var.get(),
+            "fmt": self.fmt_var.get(),
+            "bps": self.bps_var.get(),
+            "res": self.res_var.get(),
+            "fps": self.fps_var.get(),
+            "dl_thumb": self.dl_thumb_var.get(),
+            "embed_thumb": self.embed_thumb_var.get(),
+            "use_pl_folder": self.use_pl_folder.get(),
+            "pl_folder": self.pl_folder_var.get(),
+            "use_ep_folder": self.use_ep_folder.get(),
+            "ep_folder": self.ep_folder_var.get(),
+            "file_tmpl": self.file_var.get(),
+        }
+        if self._entries:
+            snap["selected"] = {r.original_index for r in self._rows if r.selected.get()}
+        return snap
+
+    def _theme_restore(self, snap):
+        if not snap:
+            return
+        if snap.get("url"):
+            self.url_entry.insert(0, snap["url"])
+        self.dest_var.set(snap.get("dest", self.dest_var.get()))
+        self.fmt_var.set(snap.get("fmt", self.fmt_var.get()))
+        self.bps_var.set(snap.get("bps", self.bps_var.get()))
+        self.res_var.set(snap.get("res", self.res_var.get()))
+        self.fps_var.set(snap.get("fps", self.fps_var.get()))
+        self.dl_thumb_var.set(snap.get("dl_thumb", self.dl_thumb_var.get()))
+        self.embed_thumb_var.set(snap.get("embed_thumb", self.embed_thumb_var.get()))
+        self.use_pl_folder.set(snap.get("use_pl_folder", self.use_pl_folder.get()))
+        self.pl_folder_var.set(snap.get("pl_folder", self.pl_folder_var.get()))
+        self.use_ep_folder.set(snap.get("use_ep_folder", self.use_ep_folder.get()))
+        self.ep_folder_var.set(snap.get("ep_folder", self.ep_folder_var.get()))
+        self.file_var.set(snap.get("file_tmpl", self.file_var.get()))
+        self._on_folder()
+        if self._entries:
+            self._init_playlist_ui()
+            self._add_playlist_rows(self._entries, 0)
+            for r in self._rows:
+                if r.original_index in snap.get("selected", set()):
+                    r.set_sel(True)
+            self._upd_count()
 
     def _apply_theme(self,name):
-        if name not in THEMES: return
-        self._theme=name; self._t=THEMES[name]
-        for w in self.winfo_children(): w.destroy()
-        self._rows.clear(); self._vol.clear(); self._vow.clear()
+        if name not in THEMES or name == self._theme:
+            return
+        if self._downloading:
+            self._show_overlay("Busy", "Cannot change theme while downloading.", False)
+            return
+        snap = self._theme_snapshot()
+        self._theme = name
+        self._t = THEMES[name]
+        ctk.set_appearance_mode(_appearance_for_theme(name))
+        for w in self.winfo_children():
+            w.destroy()
+        self._rows.clear()
+        self._vol.clear()
+        self._vow.clear()
         self.configure(fg_color=self._t["bg"])
         self._build()
+        self._theme_restore(snap)
 
     # ── Factories ────────────────────────────────────────────────────────────
 
@@ -307,7 +396,7 @@ class App(ctk.CTk):
 
     def _tok_buttons(self,parent,entry_widget,var,callback):
         t=self._t
-        f=ctk.CTkFrame(parent,fg_color="transparent")
+        f=ctk.CTkFrame(parent,fg_color=t["surface"])
         ctk.CTkLabel(f,text="Tokens:",font=ctk.CTkFont(family=FF,size=10),
             text_color=t["text_dim"]).pack(side="left",padx=(0,4))
         for tok in TOKENS:
@@ -337,7 +426,7 @@ class App(ctk.CTk):
         bot.pack_propagate(False)
 
         # Top row: download status
-        status_row=ctk.CTkFrame(bot,fg_color="transparent")
+        status_row=ctk.CTkFrame(bot,fg_color=t["surface"])
         status_row.pack(fill="x",padx=20,pady=(8,0))
 
         self.dl_status_lbl=ctk.CTkLabel(status_row,text="Ready",
@@ -356,7 +445,7 @@ class App(ctk.CTk):
         self.progress.pack(fill="x",padx=20,pady=(6,0))
 
         # Bottom row: folder picker + download button
-        bot_row=ctk.CTkFrame(bot,fg_color="transparent")
+        bot_row=ctk.CTkFrame(bot,fg_color=t["surface"])
         bot_row.pack(fill="x",padx=20,pady=(8,8))
 
         ctk.CTkLabel(bot_row,text="Save to:",
@@ -371,7 +460,12 @@ class App(ctk.CTk):
 
         ctk.CTkButton(bot_row,text="📁",width=32,height=30,corner_radius=8,
             fg_color=t["surface2"],hover_color=t["border"],text_color=t["text"],
-            command=self._browse).pack(side="left",padx=(0,10))
+            command=self._browse).pack(side="left",padx=(0,4))
+
+        ctk.CTkButton(bot_row,text="Open Folder",width=100,height=30,corner_radius=8,
+            font=ctk.CTkFont(family=FF,size=12),
+            fg_color=t["surface2"],hover_color=t["border"],text_color=t["text"],
+            command=self._open_download_folder).pack(side="left",padx=(0,10))
 
         self.stop_btn=ctk.CTkButton(bot_row,text="Stop",
             width=80,height=34,corner_radius=10,
@@ -396,7 +490,7 @@ class App(ctk.CTk):
         cr=0  # current row
 
         # ── Header + themes ──────────────────────────────────────────────────
-        hdr=ctk.CTkFrame(self.content,fg_color="transparent")
+        hdr=ctk.CTkFrame(self.content,fg_color=t["bg"])
         hdr.grid(row=cr,column=0,sticky="we",padx=24,pady=(16,4)); cr+=1
         hdr.grid_columnconfigure(0,weight=1)
 
@@ -408,7 +502,7 @@ class App(ctk.CTk):
             text_color=t["text_dim"]).grid(row=1,column=0,sticky="w")
 
         # Theme swatches
-        th_f=ctk.CTkFrame(hdr,fg_color="transparent")
+        th_f=ctk.CTkFrame(hdr,fg_color=t["bg"])
         th_f.grid(row=0,column=1,rowspan=2,sticky="e")
         ctk.CTkLabel(th_f,text="Theme",font=ctk.CTkFont(family=FF,size=11),
             text_color=t["text_dim"]).pack(side="left",padx=(0,8))
@@ -424,7 +518,7 @@ class App(ctk.CTk):
             ).grid(row=cr,column=0,sticky="we",padx=24,pady=(4,8)); cr+=1
 
         # ── URL bar ──────────────────────────────────────────────────────────
-        uf=ctk.CTkFrame(self.content,fg_color="transparent")
+        uf=ctk.CTkFrame(self.content,fg_color=t["bg"])
         uf.grid(row=cr,column=0,sticky="we",padx=24); cr+=1
         uf.grid_columnconfigure(0,weight=1)
 
@@ -445,7 +539,7 @@ class App(ctk.CTk):
             border_color=t["border"],border_width=1)
         c1.grid(row=cr,column=0,sticky="we",padx=24,pady=(10,0)); cr+=1
 
-        s=ctk.CTkFrame(c1,fg_color="transparent")
+        s=ctk.CTkFrame(c1,fg_color=t["surface"])
         s.pack(fill="x",padx=18,pady=12)
         for c in range(4): s.grid_columnconfigure(c,weight=1)
 
@@ -484,7 +578,7 @@ class App(ctk.CTk):
             border_color=t["border"],border_width=1)
         c_opt.grid(row=cr,column=0,sticky="we",padx=24,pady=(8,0)); cr+=1
 
-        opt_inner=ctk.CTkFrame(c_opt,fg_color="transparent")
+        opt_inner=ctk.CTkFrame(c_opt,fg_color=t["surface"])
         opt_inner.pack(fill="x",padx=18,pady=12)
 
         self._heading(opt_inner,"Cover Options").grid(row=0,column=0,sticky="w",
@@ -511,7 +605,7 @@ class App(ctk.CTk):
             border_color=t["border"],border_width=1)
         c2.grid(row=cr,column=0,sticky="we",padx=24,pady=(8,0)); cr+=1
 
-        n=ctk.CTkFrame(c2,fg_color="transparent")
+        n=ctk.CTkFrame(c2,fg_color=t["surface"])
         n.pack(fill="x",padx=18,pady=12)
         n.grid_columnconfigure(1,weight=1)
 
@@ -568,7 +662,7 @@ class App(ctk.CTk):
         self._heading(n,"File Name").grid(row=7,column=0,sticky="w",
             columnspan=6,pady=(0,6))
 
-        tmpl_row=ctk.CTkFrame(n,fg_color="transparent")
+        tmpl_row=ctk.CTkFrame(n,fg_color=t["surface"])
         tmpl_row.grid(row=8,column=0,columnspan=6,sticky="we")
         tmpl_row.grid_columnconfigure(0,weight=1)
 
@@ -594,7 +688,7 @@ class App(ctk.CTk):
         self.preview_lbl.grid(row=10,column=0,columnspan=6,sticky="w",pady=(2,0))
 
         # ── Toolbar ──────────────────────────────────────────────────────────
-        tb=ctk.CTkFrame(self.content,fg_color="transparent")
+        tb=ctk.CTkFrame(self.content,fg_color=t["bg"])
         tb.grid(row=cr,column=0,sticky="we",padx=24,pady=(10,3)); cr+=1
         tb.grid_columnconfigure(2,weight=1)
 
@@ -710,6 +804,56 @@ class App(ctk.CTk):
         f=filedialog.askdirectory()
         if f: self.dest_var.set(os.path.normpath(f))
 
+    def _folder_parts(self, count, row_index=None, include_episode=True):
+        base=self.dest_var.get().strip() or os.path.join(os.path.expanduser("~"), "Downloads")
+        parts=[base]
+
+        def replace_vars(s, idx):
+            if idx is not None:
+                s = s.replace("{number}", str(idx+1))
+                s = s.replace("{number2}", f"{idx+1:02d}")
+                s = s.replace("{number3}", f"{idx+1:03d}")
+            clean_pl = sanitize(self._pl_title).replace("%", "%%")
+            s = s.replace("{playlist}", clean_pl)
+            return tok_to_yt(s)
+
+        if count>1:
+            if self.use_pl_folder.get():
+                pl_tmpl=self.pl_folder_var.get().strip() or DEFAULT_FOLDER_TMPL
+                parts.append(replace_vars(pl_tmpl, row_index))
+            if include_episode and self.use_ep_folder.get() and row_index is not None:
+                ep_tmpl=self.ep_folder_var.get().strip() or DEFAULT_EP_TMPL
+                parts.append(replace_vars(ep_tmpl, row_index))
+        return parts, replace_vars
+
+    def _resolve_download_dir(self, row_index=None, include_episode=False):
+        count = len(self._entries) or 1
+        parts, _ = self._folder_parts(count, row_index, include_episode=include_episode)
+        return os.path.normpath(os.path.join(*parts))
+
+    def _open_download_folder(self):
+        selected = [r for r in self._rows if r.selected.get()]
+        if len(selected) == 1:
+            path = self._resolve_download_dir(selected[0].original_index, include_episode=True)
+        else:
+            path = self._resolve_download_dir(include_episode=False)
+
+        try:
+            os.makedirs(path, exist_ok=True)
+        except OSError as e:
+            self._show_overlay("Folder Error", f"Could not create folder:\n{path}\n\n{e}", True)
+            return
+
+        try:
+            if sys.platform.startswith("win"):
+                os.startfile(path)
+            elif sys.platform == "darwin":
+                subprocess.run(["open", path], check=False)
+            else:
+                subprocess.run(["xdg-open", path], check=False)
+        except OSError as e:
+            self._show_overlay("Folder Error", f"Could not open folder:\n{e}", True)
+
     # ── Fetch ────────────────────────────────────────────────────────────────
 
     def _clean_url(self, url):
@@ -815,33 +959,51 @@ class App(ctk.CTk):
         self.url_entry.configure(placeholder_text="Please re-enter a valid URL...")
         self.url_entry.focus()
 
+    def _init_playlist_ui(self):
+        t = self._t
+        for w in self.list_box.winfo_children():
+            w.destroy()
+        self._rows.clear()
+        self.inner_list = ctk.CTkScrollableFrame(
+            self.list_box, fg_color=t["surface"],
+            scrollbar_button_color=t["border"],
+            scrollbar_button_hover_color=t["accent"],
+        )
+        self.inner_list.pack(fill="both", expand=True, padx=4, pady=4)
+        self.inner_list.grid_columnconfigure(0, weight=1)
+        self.pl_lbl = ctk.CTkLabel(
+            self.inner_list,
+            text=f"{self._pl_title}  ·  {len(self._entries)} videos",
+            font=ctk.CTkFont(family=FF, size=14, weight="bold"),
+            text_color=t["accent2"],
+        )
+        self.pl_lbl.grid(row=0, column=0, sticky="w", padx=10, pady=(6, 4))
+
+    def _add_playlist_rows(self, entries, start_index):
+        t = self._t
+        for i, e in enumerate(entries):
+            idx = start_index + i
+            r = VideoRow(
+                self.inner_list, idx, e["title"], e["duration"], e["url"],
+                self._upd_count, t,
+            )
+            r.grid(row=idx + 1, column=0, sticky="we", padx=4, pady=1)
+            self._rows.append(r)
+
+    def _playlist_ui_ready(self):
+        return hasattr(self, "inner_list") and self.inner_list.winfo_exists()
+
     def _append_and_check(self, resolved, pl_title, chunk_len):
-        t=self._t
         if not self._pl_title:
             self._pl_title = pl_title
-            for w in self.list_box.winfo_children(): w.destroy()
-            self._rows.clear()
+        if not self._playlist_ui_ready():
+            self._init_playlist_ui()
 
-            self.inner_list=ctk.CTkScrollableFrame(self.list_box,fg_color="transparent",
-                scrollbar_button_color=t["border"],
-                scrollbar_button_hover_color=t["accent"])
-            self.inner_list.pack(fill="both",expand=True,padx=4,pady=4)
-            self.inner_list.grid_columnconfigure(0,weight=1)
-
-            self.pl_lbl=ctk.CTkLabel(self.inner_list,text=f"{self._pl_title}  ·  0 videos",
-                font=ctk.CTkFont(family=FF,size=14,weight="bold"),
-                text_color=t["accent2"])
-            self.pl_lbl.grid(row=0,column=0,sticky="w",padx=10,pady=(6,4))
-            
         new_start = len(self._entries)
         self._entries.extend(resolved)
         self.pl_lbl.configure(text=f"{self._pl_title}  ·  {len(self._entries)} videos")
 
-        for i,e in enumerate(resolved):
-            idx = new_start + i
-            r=VideoRow(self.inner_list,idx,e["title"],e["duration"],e["url"],self._upd_count,t)
-            r.grid(row=idx+1,column=0,sticky="we",padx=4,pady=1)
-            self._rows.append(r)
+        self._add_playlist_rows(resolved, new_start)
 
         self._upd_count(); self._upd_preview()
         
@@ -912,25 +1074,7 @@ class App(ctk.CTk):
 
     def _build_outtmpl(self, count, row_index=None):
         """Build the yt-dlp outtmpl string from user templates."""
-        base=self.dest_var.get().strip() or os.path.join(os.path.expanduser("~"), "Downloads")
-        parts=[base]
-
-        def replace_vars(s, idx):
-            if idx is not None:
-                s = s.replace("{number}", str(idx+1))
-                s = s.replace("{number2}", f"{idx+1:02d}")
-                s = s.replace("{number3}", f"{idx+1:03d}")
-            clean_pl = sanitize(self._pl_title).replace("%", "%%")
-            s = s.replace("{playlist}", clean_pl)
-            return tok_to_yt(s)
-
-        if count>1:
-            if self.use_pl_folder.get():
-                pl_tmpl=self.pl_folder_var.get().strip() or DEFAULT_FOLDER_TMPL
-                parts.append(replace_vars(pl_tmpl, row_index))
-            if self.use_ep_folder.get():
-                ep_tmpl=self.ep_folder_var.get().strip() or DEFAULT_EP_TMPL
-                parts.append(replace_vars(ep_tmpl, row_index))
+        parts, replace_vars = self._folder_parts(count, row_index, include_episode=True)
 
         file_tmpl=self.file_var.get().strip() or DEFAULT_FILE_TMPL
         parts.append(replace_vars(file_tmpl, row_index)+".%(ext)s")
@@ -1041,6 +1185,9 @@ class App(ctk.CTk):
             if pp:
                 ydl_opts["postprocessors"]=pp
 
+            if FFMPEG_DIR:
+                ydl_opts["ffmpeg_location"] = FFMPEG_DIR
+
             ydl_opts["progress_hooks"] = [progress_hook]
 
             try:
@@ -1068,6 +1215,8 @@ class App(ctk.CTk):
                     short = "✗ Region-Blocked"
                 elif "requested format is not available" in err_str:
                     short = "✗ Format Unavailable"
+                elif "ffmpeg" in err_str or "ffprobe" in err_str:
+                    short = "✗ ffmpeg missing"
                 if "cancelled by user" in err_str:
                     self.after(0, lambda r=row: r.set_status("✗ Cancelled", t["warning"]))
                     break # exit the loop if cancelled by user
