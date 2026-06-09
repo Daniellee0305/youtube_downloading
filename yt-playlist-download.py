@@ -5,7 +5,7 @@ flexible folder + file naming templates, and detailed progress.
 Built with CustomTkinter + yt-dlp.
 """
 
-import os, sys, re, threading, io, glob
+import os, sys, re, threading, io, glob, shutil
 import urllib.request
 import customtkinter as ctk
 from PIL import Image
@@ -24,6 +24,25 @@ elif sys.platform == "darwin":
 else:
     FF = "Ubuntu"
     MF = "Ubuntu Mono"
+
+
+def _find_ffmpeg_dir():
+    ff = shutil.which("ffmpeg")
+    if ff:
+        return os.path.dirname(os.path.abspath(ff))
+    if sys.platform.startswith("win"):
+        pattern = os.path.join(
+            os.environ.get("LOCALAPPDATA", ""),
+            "Microsoft", "WinGet", "Packages",
+            "Gyan.FFmpeg_*", "ffmpeg-*-full_build", "bin",
+        )
+        for bin_dir in sorted(glob.glob(pattern), reverse=True):
+            if os.path.isfile(os.path.join(bin_dir, "ffmpeg.exe")):
+                return bin_dir
+    return None
+
+
+FFMPEG_DIR = _find_ffmpeg_dir()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -268,6 +287,13 @@ class App(ctk.CTk):
         self._cancel_download=False
         self.configure(fg_color=self._t["bg"])
         self._build()
+        if not FFMPEG_DIR:
+            self.after(500, lambda: messagebox.showwarning(
+                "ffmpeg not found",
+                "ffmpeg/ffprobe are required for audio extraction and video merging.\n\n"
+                "Windows: winget install Gyan.FFmpeg\n"
+                "Or download from https://www.gyan.dev/ffmpeg/builds/ and add to PATH.",
+            ))
 
     def _apply_theme(self,name):
         if name not in THEMES: return
@@ -1041,6 +1067,9 @@ class App(ctk.CTk):
             if pp:
                 ydl_opts["postprocessors"]=pp
 
+            if FFMPEG_DIR:
+                ydl_opts["ffmpeg_location"] = FFMPEG_DIR
+
             ydl_opts["progress_hooks"] = [progress_hook]
 
             try:
@@ -1068,6 +1097,8 @@ class App(ctk.CTk):
                     short = "✗ Region-Blocked"
                 elif "requested format is not available" in err_str:
                     short = "✗ Format Unavailable"
+                elif "ffmpeg" in err_str or "ffprobe" in err_str:
+                    short = "✗ ffmpeg missing"
                 if "cancelled by user" in err_str:
                     self.after(0, lambda r=row: r.set_status("✗ Cancelled", t["warning"]))
                     break # exit the loop if cancelled by user
