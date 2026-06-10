@@ -28,6 +28,25 @@ else:
     FF = "Ubuntu"
     MF = "Ubuntu Mono"
 
+DEFAULT_FONT_PT = 20
+FONT_PT_MIN = 14
+FONT_PT_MAX = 28
+
+
+def ui_sz(pt, ratio=1.0):
+    return max(10, round(pt * ratio))
+
+
+def ui_font(pt, ratio=1.0, weight="normal", mono=False):
+    kw = {"family": MF if mono else FF, "size": ui_sz(pt, ratio)}
+    if weight != "normal":
+        kw["weight"] = weight
+    return ctk.CTkFont(**kw)
+
+
+def ui_h(pt, ratio=1.5):
+    return max(24, round(pt * ratio))
+
 
 def _find_ffmpeg_dir():
     ff = shutil.which("ffmpeg")
@@ -137,6 +156,16 @@ TOKEN_MAP = {
 }
 TOKENS = ["{title}","{author}","{number}","{number2}","{number3}",
           "{playlist}","{date}","{year}","{id}"]
+TOKEN_LABELS = {
+    "{title}": "Title", "{author}": "Channel", "{number}": "#",
+    "{number2}": "##", "{number3}": "###", "{playlist}": "Playlist",
+    "{date}": "Date", "{year}": "Year", "{id}": "ID",
+}
+FILE_PRESETS = [
+    ("##. Title", "{number2}. {title}"),
+    ("Title only", "{title}"),
+    ("Channel – Title", "{author} - {title}"),
+]
 DEFAULT_FILE_TMPL   = "{number2}. {title}"
 DEFAULT_FOLDER_TMPL = "{playlist}"
 DEFAULT_EP_TMPL     = "{number2} - {title}"
@@ -186,9 +215,10 @@ def sanitize(n): return re.sub(r'[<>:"/\\|?*]','',n).strip()
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class VideoRow(ctk.CTkFrame):
-    def __init__(self, master, i, title, dur, url, on_toggle, t, **kw):
+    def __init__(self, master, i, title, dur, url, on_toggle, t, font_pt=DEFAULT_FONT_PT, **kw):
         bg=t["row_even"] if i%2==0 else t["row_odd"]
-        super().__init__(master, fg_color=bg, corner_radius=10, height=44, **kw)
+        super().__init__(master, fg_color=bg, corner_radius=10, height=ui_h(font_pt, 2.2), **kw)
+        self._font_pt = font_pt
         self.grid_columnconfigure(2, weight=1)
         self.url=url; self.duration_sec=dur; self.title_text=title
         self.original_index = i
@@ -200,27 +230,29 @@ class VideoRow(ctk.CTkFrame):
             border_color=t["border"],corner_radius=5,command=self._tog)
         self.cb.grid(row=0,column=0,padx=(12,6),pady=6)
 
-        ctk.CTkLabel(self,text=f"{i+1}.",width=30,
-            font=ctk.CTkFont(family=FF,size=12,weight="bold"),
+        chip_h = ui_h(font_pt, 1.0)
+        ctk.CTkLabel(self,text=f"{i+1}.",width=ui_sz(font_pt, 1.8),
+            font=ui_font(font_pt, 0.9, "bold"),
             text_color=t["text_dim"]).grid(row=0,column=1,padx=(0,4),sticky="w")
 
-        ctk.CTkLabel(self,text=title,font=ctk.CTkFont(family=FF,size=13),
+        ctk.CTkLabel(self,text=title,font=ui_font(font_pt, 1.0),
             text_color=t["text"],anchor="w").grid(row=0,column=2,padx=(0,8),sticky="we")
 
-        ctk.CTkLabel(self,text=fmt_dur(dur),font=ctk.CTkFont(family=FF,size=11),
+        ctk.CTkLabel(self,text=fmt_dur(dur),font=ui_font(font_pt, 0.85),
             text_color=t["text_dim"],fg_color=t["surface2"],
-            corner_radius=8,width=56,height=20).grid(row=0,column=3,padx=(0,4),pady=6)
+            corner_radius=8,width=ui_sz(font_pt, 3.2),height=chip_h).grid(row=0,column=3,padx=(0,4),pady=6)
 
-        self.size_lbl=ctk.CTkLabel(self,text="—",width=68,
-            font=ctk.CTkFont(family=FF,size=11),text_color=t["accent2"],
-            fg_color=t["surface2"],corner_radius=8,height=20)
+        self.size_lbl=ctk.CTkLabel(self,text="—",width=ui_sz(font_pt, 4.0),
+            font=ui_font(font_pt, 0.85),text_color=t["accent2"],
+            fg_color=t["surface2"],corner_radius=8,height=chip_h)
         self.size_lbl.grid(row=0,column=4,padx=(0,4),pady=6)
 
-        self.status_lbl=ctk.CTkLabel(self,text="",width=100,
-            font=ctk.CTkFont(family=FF,size=11),text_color=t["text_dim"])
+        self.status_lbl=ctk.CTkLabel(self,text="",width=ui_sz(font_pt, 5.5),
+            font=ui_font(font_pt, 0.85),text_color=t["text_dim"])
         self.status_lbl.grid(row=0,column=5,padx=(0,12),pady=6)
 
-        self.info_lbl=ctk.CTkLabel(self,text="",width=20,font=ctk.CTkFont(size=12))
+        self.info_lbl=ctk.CTkLabel(self,text="",width=ui_sz(font_pt, 1.2),
+            font=ui_font(font_pt, 0.9))
         self.info_lbl.grid(row=0,column=6,padx=(0,8))
 
         self.bind("<Enter>",lambda _: self.configure(fg_color=t["row_hover"]) if not self.selected.get() else None)
@@ -238,35 +270,81 @@ class VideoRow(ctk.CTkFrame):
         self.size_lbl.configure(text=fmt_size(b) if b>=0 else "—")
         
     def set_hover_info(self, ctk_im, txt):
-        self.info_lbl.configure(text="ℹ️", text_color=self._t["accent2"], cursor="hand2")
+        t = self._t
+        self._hover_img = ctk_im
+        self.info_lbl.configure(text="ⓘ", text_color=t["accent2"], cursor="hand2")
         self.hover_win = None
-        
-        def on_enter(e):
-            if self.hover_win: return
-            self.hover_win = ctk.CTkToplevel(self.winfo_toplevel())
-            self.hover_win.overrideredirect(True)
-            self.hover_win.attributes("-topmost", True)
-            
-            x = self.info_lbl.winfo_rootx() - 180
-            y = self.info_lbl.winfo_rooty() + 25
-            self.hover_win.geometry(f"+{x}+{y}")
-            
-            f = ctk.CTkFrame(self.hover_win, fg_color=self._t["surface"], 
-                             border_color=self._t["border"], border_width=1, corner_radius=8)
-            f.pack(fill="both", expand=True)
-            
-            if ctk_im:
-                ctk.CTkLabel(f, text="", image=ctk_im).pack(padx=10, pady=(10,4))
-            ctk.CTkLabel(f, text=txt, font=ctk.CTkFont(family=FF, size=11, weight="bold"),
-                         text_color=self._t["text"]).pack(padx=10, pady=(0,10))
-            
-        def on_leave(e):
-            if self.hover_win:
+        self._hover_hide_id = None
+
+        def _cancel_hide():
+            if self._hover_hide_id is not None:
+                self.winfo_toplevel().after_cancel(self._hover_hide_id)
+                self._hover_hide_id = None
+
+        def _hide():
+            self._hover_hide_id = None
+            if self.hover_win and self.hover_win.winfo_exists():
                 self.hover_win.destroy()
-                self.hover_win = None
-                
-        self.info_lbl.bind("<Enter>", on_enter)
-        self.info_lbl.bind("<Leave>", on_leave)
+            self.hover_win = None
+
+        def _schedule_hide(_=None):
+            _cancel_hide()
+            self._hover_hide_id = self.winfo_toplevel().after(180, _hide)
+
+        def _bind_hover_group(widget):
+            widget.bind("<Enter>", lambda _: _cancel_hide())
+            widget.bind("<Leave>", _schedule_hide)
+            for child in widget.winfo_children():
+                _bind_hover_group(child)
+
+        def _show(_=None):
+            _cancel_hide()
+            if self.hover_win and self.hover_win.winfo_exists():
+                return
+            win = ctk.CTkToplevel(self.winfo_toplevel())
+            win.overrideredirect(True)
+            win.attributes("-topmost", True)
+            self.hover_win = win
+
+            f = ctk.CTkFrame(win, fg_color=t["surface"],
+                             border_color=t["border"], border_width=1, corner_radius=10)
+            f.pack(fill="both", expand=True)
+
+            fp = self._font_pt
+            ctk.CTkLabel(f, text="Source quality", font=ui_font(fp, 0.8),
+                         text_color=t["text_dim"]).pack(padx=12, pady=(10, 4), anchor="w")
+            if ctk_im:
+                ctk.CTkLabel(f, text="", image=ctk_im).pack(padx=12, pady=(0, 4))
+            for line in txt.split("\n"):
+                ctk.CTkLabel(f, text=line,
+                    font=ui_font(fp, 0.9, "bold" if line.endswith(":") else "normal"),
+                    text_color=t["text"]).pack(padx=12, anchor="w")
+            ctk.CTkLabel(f, text="").pack(pady=(0, 8))
+
+            win.update_idletasks()
+            ax = self.info_lbl.winfo_rootx()
+            ay = self.info_lbl.winfo_rooty()
+            aw = self.info_lbl.winfo_width()
+            ah = self.info_lbl.winfo_height()
+            pw = win.winfo_reqwidth()
+            ph = win.winfo_reqheight()
+            sw = win.winfo_screenwidth()
+            sh = win.winfo_screenheight()
+
+            x = ax + aw - pw
+            y = ay - ph - 10
+            if y < 40:
+                y = ay + ah + 10
+            if y + ph > sh - 120:
+                y = max(40, ay - ph - 10)
+            x = max(12, min(x, sw - pw - 12))
+
+            win.geometry(f"+{x}+{y}")
+            _bind_hover_group(win)
+            _bind_hover_group(f)
+
+        self.info_lbl.bind("<Enter>", _show)
+        self.info_lbl.bind("<Leave>", _schedule_hide)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -281,6 +359,8 @@ class App(ctk.CTk):
         self.minsize(720,500)
         self._rows=[]
         self._entries=[]
+        self._fetch_gen=0
+        self._active_fetch_gen=0
         self._downloading=False
         self._vol=[]        # video-only labels
         self._vow=[]        # video-only widgets
@@ -288,6 +368,8 @@ class App(ctk.CTk):
         self._theme=DEFAULT_THEME
         self._t=THEMES[DEFAULT_THEME]
         self._cancel_download=False
+        self._font_pt=DEFAULT_FONT_PT
+        self._font_job=None
         ctk.set_appearance_mode(_appearance_for_theme(DEFAULT_THEME))
         self.configure(fg_color=self._t["bg"])
         self._build()
@@ -303,6 +385,7 @@ class App(ctk.CTk):
         if not hasattr(self, "url_entry"):
             return {}
         snap = {
+            "font_pt": self._font_pt,
             "url": self.url_entry.get(),
             "dest": self.dest_var.get(),
             "fmt": self.fmt_var.get(),
@@ -324,6 +407,8 @@ class App(ctk.CTk):
     def _theme_restore(self, snap):
         if not snap:
             return
+        if snap.get("font_pt"):
+            self._font_pt = snap["font_pt"]
         if snap.get("url"):
             self.url_entry.insert(0, snap["url"])
         self.dest_var.set(snap.get("dest", self.dest_var.get()))
@@ -366,12 +451,49 @@ class App(ctk.CTk):
         self._build()
         self._theme_restore(snap)
 
+    # ── Font scaling ─────────────────────────────────────────────────────────
+
+    def _sz(self, ratio=1.0):
+        return ui_sz(self._font_pt, ratio)
+
+    def _f(self, ratio=1.0, weight="normal", mono=False):
+        return ui_font(self._font_pt, ratio, weight, mono)
+
+    def _h(self, ratio=1.5):
+        return ui_h(self._font_pt, ratio)
+
+    def _on_font_slide(self, value):
+        pt = int(round(float(value)))
+        self._font_size_lbl.configure(text=f"{pt} pt")
+        if pt == self._font_pt:
+            return
+        self._pending_font_pt = pt
+        if self._font_job:
+            self.after_cancel(self._font_job)
+        self._font_job = self.after(150, self._commit_font_size)
+
+    def _commit_font_size(self):
+        self._font_job = None
+        pt = getattr(self, "_pending_font_pt", self._font_pt)
+        if pt == self._font_pt or self._downloading:
+            return
+        self._font_pt = pt
+        snap = self._theme_snapshot()
+        for w in self.winfo_children():
+            w.destroy()
+        self._rows.clear()
+        self._vol.clear()
+        self._vow.clear()
+        self.configure(fg_color=self._t["bg"])
+        self._build()
+        self._theme_restore(snap)
+
     # ── Factories ────────────────────────────────────────────────────────────
 
     def _dd(self,p,var,vals,w=120):
         t=self._t
-        return ctk.CTkOptionMenu(p,variable=var,values=vals,width=w,height=30,
-            font=ctk.CTkFont(family=FF,size=12),fg_color=t["surface2"],
+        return ctk.CTkOptionMenu(p,variable=var,values=vals,width=w,height=self._h(1.5),
+            font=self._f(),fg_color=t["surface2"],
             button_color=t["accent"],button_hover_color=t["accent_hover"],
             text_color=t["text"],dropdown_fg_color=t["surface2"],
             dropdown_text_color=t["text"],dropdown_hover_color=t["accent"],
@@ -379,34 +501,36 @@ class App(ctk.CTk):
 
     def _lbl(self,p,txt,r,c,vo=False):
         t=self._t
-        l=ctk.CTkLabel(p,text=txt,font=ctk.CTkFont(family=FF,size=11,weight="bold"),
+        l=ctk.CTkLabel(p,text=txt,font=self._f(0.9,"bold"),
             text_color=t["text_dim"])
-        l.grid(row=r,column=c,sticky="w",padx=(0,12),pady=(0,3))
+        l.grid(row=r,column=c,sticky="w",padx=(0,8),pady=(0,2))
         if vo: self._vol.append(l)
         return l
 
     def _heading(self,p,txt):
-        return ctk.CTkLabel(p,text=txt,
-            font=ctk.CTkFont(family=FF,size=13,weight="bold"),
-            text_color=self._t["text"])
+        return ctk.CTkLabel(p,text=txt,font=self._f(1.0,"bold"),text_color=self._t["text"])
 
     def _sep(self,p,r):
         ctk.CTkFrame(p,fg_color=self._t["border"],height=1
-            ).grid(row=r,column=0,columnspan=20,sticky="we",pady=8)
+            ).grid(row=r,column=0,columnspan=20,sticky="we",pady=4)
 
     def _tok_buttons(self,parent,entry_widget,var,callback):
         t=self._t
-        f=ctk.CTkFrame(parent,fg_color=t["surface"])
-        ctk.CTkLabel(f,text="Tokens:",font=ctk.CTkFont(family=FF,size=10),
-            text_color=t["text_dim"]).pack(side="left",padx=(0,4))
+        f=ctk.CTkFrame(parent,fg_color=t["surface"],corner_radius=6)
+        ctk.CTkLabel(f,text="Insert:",
+            font=self._f(0.8),text_color=t["text_dim"]
+        ).pack(anchor="w",padx=8,pady=(4,2))
+        row=ctk.CTkFrame(f,fg_color=t["surface"])
+        row.pack(fill="x",padx=6,pady=(0,4))
         for tok in TOKENS:
-            ctk.CTkButton(f,text=tok,height=22,width=len(tok)*7+14,
-                font=ctk.CTkFont(family=MF,size=10),
+            label=TOKEN_LABELS.get(tok,tok)
+            ctk.CTkButton(row,text=label,height=self._h(1.2),
+                font=self._f(0.85),
                 fg_color=t["tag_bg"],hover_color=t["accent"],
-                text_color=t["tag_text"],corner_radius=5,
+                text_color=t["tag_text"],corner_radius=6,
                 command=lambda tk=tok,e=entry_widget,v=var,cb=callback:
                     self._insert_tok(e,v,tk,cb)
-            ).pack(side="left",padx=1,pady=1)
+            ).pack(side="left",padx=2,pady=2)
         return f
 
     def _insert_tok(self,entry,var,tok,cb):
@@ -421,64 +545,57 @@ class App(ctk.CTk):
         t=self._t
 
         # ── Bottom bar (FIRST → never hidden) ────────────────────────────────
-        bot=ctk.CTkFrame(self,fg_color=t["surface"],corner_radius=0,height=100)
+        bot_h = self._h(4.8)
+        bot=ctk.CTkFrame(self,fg_color=t["surface"],corner_radius=0,height=bot_h)
         bot.pack(side="bottom",fill="x")
         bot.pack_propagate(False)
 
-        # Top row: download status
         status_row=ctk.CTkFrame(bot,fg_color=t["surface"])
-        status_row.pack(fill="x",padx=20,pady=(8,0))
+        status_row.pack(fill="x",padx=16,pady=(6,0))
 
         self.dl_status_lbl=ctk.CTkLabel(status_row,text="Ready",
-            font=ctk.CTkFont(family=FF,size=12),text_color=t["text_dim"],anchor="w")
+            font=self._f(),text_color=t["text_dim"],anchor="w")
         self.dl_status_lbl.pack(side="left",fill="x",expand=True)
 
         self.pct_lbl=ctk.CTkLabel(status_row,text="",
-            font=ctk.CTkFont(family=FF,size=12,weight="bold"),
-            text_color=t["accent2"])
+            font=self._f(1.0,"bold"),text_color=t["accent2"])
         self.pct_lbl.pack(side="right")
 
-        # Progress bar
-        self.progress=ctk.CTkProgressBar(bot,height=8,
+        self.progress=ctk.CTkProgressBar(bot,height=max(6,self._sz(0.4)),
             fg_color=t["surface2"],progress_color=t["accent"],corner_radius=4)
         self.progress.set(0)
-        self.progress.pack(fill="x",padx=20,pady=(6,0))
+        self.progress.pack(fill="x",padx=16,pady=(4,0))
 
-        # Bottom row: folder picker + download button
         bot_row=ctk.CTkFrame(bot,fg_color=t["surface"])
-        bot_row.pack(fill="x",padx=20,pady=(8,8))
+        bot_row.pack(fill="x",padx=16,pady=(6,6))
 
-        ctk.CTkLabel(bot_row,text="Save to:",
-            font=ctk.CTkFont(family=FF,size=11),
+        ctk.CTkLabel(bot_row,text="Save to:",font=self._f(0.9),
             text_color=t["text_dim"]).pack(side="left",padx=(0,4))
 
         self.dest_var=ctk.StringVar(value=os.path.join(os.path.expanduser("~"), "Downloads"))
-        ctk.CTkEntry(bot_row,textvariable=self.dest_var,height=30,
-            font=ctk.CTkFont(family=FF,size=12),fg_color=t["surface2"],
+        ctk.CTkEntry(bot_row,textvariable=self.dest_var,height=self._h(1.5),
+            font=self._f(),fg_color=t["surface2"],
             border_color=t["border"],text_color=t["text"],corner_radius=8
         ).pack(side="left",fill="x",expand=True,padx=(0,4))
 
-        ctk.CTkButton(bot_row,text="📁",width=32,height=30,corner_radius=8,
-            fg_color=t["surface2"],hover_color=t["border"],text_color=t["text"],
-            command=self._browse).pack(side="left",padx=(0,4))
+        ctk.CTkButton(bot_row,text="📁",width=self._h(1.6),height=self._h(1.5),
+            corner_radius=8,fg_color=t["surface2"],hover_color=t["border"],
+            text_color=t["text"],command=self._browse).pack(side="left",padx=(0,4))
 
-        ctk.CTkButton(bot_row,text="Open Folder",width=100,height=30,corner_radius=8,
-            font=ctk.CTkFont(family=FF,size=12),
-            fg_color=t["surface2"],hover_color=t["border"],text_color=t["text"],
-            command=self._open_download_folder).pack(side="left",padx=(0,10))
+        ctk.CTkButton(bot_row,text="Open Folder",width=self._sz(5.5),height=self._h(1.5),
+            corner_radius=8,font=self._f(0.9),fg_color=t["surface2"],
+            hover_color=t["border"],text_color=t["text"],
+            command=self._open_download_folder).pack(side="left",padx=(0,8))
 
         self.stop_btn=ctk.CTkButton(bot_row,text="Stop",
-            width=80,height=34,corner_radius=10,
-            font=ctk.CTkFont(family=FF,size=13,weight="bold"),
-            fg_color=t["error"],hover_color=t["error"],
+            width=self._sz(4.5),height=self._h(1.7),corner_radius=10,
+            font=self._f(1.0,"bold"),fg_color=t["error"],hover_color=t["error"],
             command=self._on_stop)
-        # We don't pack stop_btn yet
 
         self.dl_btn=ctk.CTkButton(bot_row,text="Download Selected",
-            width=170,height=34,corner_radius=10,
-            font=ctk.CTkFont(family=FF,size=13,weight="bold"),
-            fg_color=t["accent"],hover_color=t["accent_hover"],
-            command=self._on_download)
+            width=self._sz(9),height=self._h(1.7),corner_radius=10,
+            font=self._f(1.0,"bold"),fg_color=t["accent"],
+            hover_color=t["accent_hover"],command=self._on_download)
         self.dl_btn.pack(side="right")
 
         # ── Scrollable content ───────────────────────────────────────────────
@@ -489,77 +606,101 @@ class App(ctk.CTk):
         self.content.grid_columnconfigure(0,weight=1)
         cr=0  # current row
 
-        # ── Header + themes ──────────────────────────────────────────────────
+        # ── Header + themes + font ───────────────────────────────────────────
         hdr=ctk.CTkFrame(self.content,fg_color=t["bg"])
-        hdr.grid(row=cr,column=0,sticky="we",padx=24,pady=(16,4)); cr+=1
+        hdr.grid(row=cr,column=0,sticky="we",padx=16,pady=(8,2)); cr+=1
         hdr.grid_columnconfigure(0,weight=1)
 
         ctk.CTkLabel(hdr,text="YouTube Playlist Downloader",
-            font=ctk.CTkFont(family=FF,size=24,weight="bold"),
-            text_color=t["text"]).grid(row=0,column=0,sticky="w")
+            font=self._f(1.35,"bold"),text_color=t["text"]).grid(row=0,column=0,sticky="w")
         ctk.CTkLabel(hdr,text="powered by yt-dlp",
-            font=ctk.CTkFont(family=FF,size=12),
-            text_color=t["text_dim"]).grid(row=1,column=0,sticky="w")
+            font=self._f(0.9),text_color=t["text_dim"]).grid(row=1,column=0,sticky="w")
 
-        # Theme swatches
         th_f=ctk.CTkFrame(hdr,fg_color=t["bg"])
         th_f.grid(row=0,column=1,rowspan=2,sticky="e")
-        ctk.CTkLabel(th_f,text="Theme",font=ctk.CTkFont(family=FF,size=11),
+        ctk.CTkLabel(th_f,text="Theme",font=self._f(0.85),
+            text_color=t["text_dim"]).pack(anchor="e",pady=(0,2))
+        th_rows=ctk.CTkFrame(th_f,fg_color=t["bg"])
+        th_rows.pack(anchor="e")
+        theme_names=list(THEMES.keys())
+        for ri in range(2):
+            row_f=ctk.CTkFrame(th_rows,fg_color=t["bg"])
+            row_f.pack(anchor="e",pady=(0,2) if ri==0 else 0)
+            for nm in theme_names[ri*5:(ri+1)*5]:
+                th=THEMES[nm]; active=(nm==self._theme)
+                cell=ctk.CTkFrame(row_f,fg_color=t["bg"])
+                cell.pack(side="left",padx=2)
+                sw = self._sz(1.1)
+                ctk.CTkButton(cell,text="",width=sw,height=sw,corner_radius=sw//2,
+                    fg_color=th["swatch"],hover_color=th["swatch"],
+                    border_width=2 if active else 0,
+                    border_color=t["accent"] if active else th["swatch"],
+                    command=lambda n=nm: self._apply_theme(n)).pack()
+                ctk.CTkLabel(cell,text=nm.replace("_"," "),
+                    font=self._f(0.7,"bold" if active else "normal"),
+                    text_color=t["accent"] if active else t["text_dim"]).pack()
+
+        font_f=ctk.CTkFrame(hdr,fg_color=t["bg"])
+        font_f.grid(row=2,column=0,columnspan=2,sticky="we",pady=(4,0))
+        ctk.CTkLabel(font_f,text="Font size",font=self._f(0.85),
             text_color=t["text_dim"]).pack(side="left",padx=(0,8))
-        for nm,th in THEMES.items():
-            sc=th["swatch"]; active=(nm==self._theme)
-            ctk.CTkButton(th_f,text="",width=24,height=24,corner_radius=12,
-                fg_color=sc,hover_color=sc,
-                border_width=3 if active else 0,
-                border_color=t["text"] if active else sc,
-                command=lambda n=nm: self._apply_theme(n)).pack(side="left",padx=2)
+        self.font_slider=ctk.CTkSlider(font_f,from_=FONT_PT_MIN,to=FONT_PT_MAX,
+            number_of_steps=FONT_PT_MAX-FONT_PT_MIN,
+            width=self._sz(14),height=self._sz(0.8),
+            button_color=t["accent"],button_hover_color=t["accent_hover"],
+            progress_color=t["accent"],fg_color=t["surface2"],
+            command=self._on_font_slide)
+        self.font_slider.set(self._font_pt)
+        self.font_slider.pack(side="left",fill="x",expand=True,padx=(0,8))
+        self._font_size_lbl=ctk.CTkLabel(font_f,text=f"{self._font_pt} pt",
+            font=self._f(0.9,"bold"),text_color=t["accent2"],width=self._sz(3.5))
+        self._font_size_lbl.pack(side="left")
 
         ctk.CTkFrame(self.content,fg_color=t["border"],height=1
-            ).grid(row=cr,column=0,sticky="we",padx=24,pady=(4,8)); cr+=1
+            ).grid(row=cr,column=0,sticky="we",padx=16,pady=(2,4)); cr+=1
 
         # ── URL bar ──────────────────────────────────────────────────────────
         uf=ctk.CTkFrame(self.content,fg_color=t["bg"])
-        uf.grid(row=cr,column=0,sticky="we",padx=24); cr+=1
+        uf.grid(row=cr,column=0,sticky="we",padx=16); cr+=1
         uf.grid_columnconfigure(0,weight=1)
 
-        self.url_entry=ctk.CTkEntry(uf,height=38,
+        self.url_entry=ctk.CTkEntry(uf,height=self._h(1.9),
             placeholder_text="Paste playlist URL here…",
-            font=ctk.CTkFont(family=FF,size=13),fg_color=t["surface"],
+            font=self._f(),fg_color=t["surface"],
             border_color=t["border"],text_color=t["text"],corner_radius=10)
-        self.url_entry.grid(row=0,column=0,sticky="we",padx=(0,8))
+        self.url_entry.grid(row=0,column=0,sticky="we",padx=(0,6))
 
-        self.fetch_btn=ctk.CTkButton(uf,text="Fetch",width=90,height=38,
-            font=ctk.CTkFont(family=FF,size=13,weight="bold"),
-            fg_color=t["accent"],hover_color=t["accent_hover"],
-            corner_radius=10,command=self._on_fetch)
+        self.fetch_btn=ctk.CTkButton(uf,text="Fetch",width=self._sz(5),height=self._h(1.9),
+            font=self._f(1.0,"bold"),fg_color=t["accent"],
+            hover_color=t["accent_hover"],corner_radius=10,command=self._on_fetch)
         self.fetch_btn.grid(row=0,column=1)
 
-        # ── Card 1: Format & Quality ─────────────────────────────────────────
-        c1=ctk.CTkFrame(self.content,fg_color=t["surface"],corner_radius=14,
+        # ── Format, quality & cover (one card) ─────────────────────────────────
+        c1=ctk.CTkFrame(self.content,fg_color=t["surface"],corner_radius=12,
             border_color=t["border"],border_width=1)
-        c1.grid(row=cr,column=0,sticky="we",padx=24,pady=(10,0)); cr+=1
+        c1.grid(row=cr,column=0,sticky="we",padx=16,pady=(4,0)); cr+=1
 
         s=ctk.CTkFrame(c1,fg_color=t["surface"])
-        s.pack(fill="x",padx=18,pady=12)
+        s.pack(fill="x",padx=12,pady=8)
         for c in range(4): s.grid_columnconfigure(c,weight=1)
 
         self._lbl(s,"Format",0,0)
         self.fmt_var=ctk.StringVar(value="MP3")
         self.fmt_var.trace_add("write",lambda*_: self._on_set())
         self.fmt_menu=self._dd(s,self.fmt_var,ALL_FORMATS,110)
-        self.fmt_menu.grid(row=1,column=0,sticky="w",padx=(0,8))
+        self.fmt_menu.grid(row=1,column=0,sticky="w",padx=(0,6))
 
         self._lbl(s,"Audio Bitrate",0,1)
         self.bps_var=ctk.StringVar(value="Original")
         self.bps_var.trace_add("write",lambda*_: self._on_set())
         self.bps_menu=self._dd(s,self.bps_var,BITRATES,110)
-        self.bps_menu.grid(row=1,column=1,sticky="w",padx=(0,8))
+        self.bps_menu.grid(row=1,column=1,sticky="w",padx=(0,6))
 
         self._lbl(s,"Resolution",0,2,vo=True)
         self.res_var=ctk.StringVar(value="Original")
         self.res_var.trace_add("write",lambda*_: self._on_set())
         self.res_menu=self._dd(s,self.res_var,RESOLUTIONS,120)
-        self.res_menu.grid(row=1,column=2,sticky="w",padx=(0,8))
+        self.res_menu.grid(row=1,column=2,sticky="w",padx=(0,6))
         self._vow.append(self.res_menu)
 
         self._lbl(s,"Frame Rate",0,3,vo=True)
@@ -569,161 +710,153 @@ class App(ctk.CTk):
         self.fps_menu.grid(row=1,column=3,sticky="w")
         self._vow.append(self.fps_menu)
 
-        self.fmt_info=ctk.CTkLabel(s,text="",font=ctk.CTkFont(family=FF,size=11),
-            text_color=t["text_dim"])
-        self.fmt_info.grid(row=2,column=0,columnspan=4,sticky="w",pady=(6,0))
+        self.fmt_info=ctk.CTkLabel(s,text="",font=self._f(0.85),text_color=t["text_dim"])
+        self.fmt_info.grid(row=2,column=0,columnspan=4,sticky="w",pady=(4,0))
 
-        # ── Card 2: Options ──────────────────────────────────────────────────
-        c_opt=ctk.CTkFrame(self.content,fg_color=t["surface"],corner_radius=14,
-            border_color=t["border"],border_width=1)
-        c_opt.grid(row=cr,column=0,sticky="we",padx=24,pady=(8,0)); cr+=1
-
-        opt_inner=ctk.CTkFrame(c_opt,fg_color=t["surface"])
-        opt_inner.pack(fill="x",padx=18,pady=12)
-
-        self._heading(opt_inner,"Cover Options").grid(row=0,column=0,sticky="w",
-            columnspan=4,pady=(0,8))
+        ctk.CTkFrame(s,fg_color=t["border"],height=1).grid(
+            row=3,column=0,columnspan=4,sticky="we",pady=6)
 
         self.dl_thumb_var=ctk.BooleanVar(value=False)
-        ctk.CTkCheckBox(opt_inner,text="Download cover/thumbnail image",
-            variable=self.dl_thumb_var,
-            font=ctk.CTkFont(family=FF,size=12),text_color=t["text"],
-            fg_color=t["accent"],hover_color=t["accent_hover"],
-            border_color=t["border"],corner_radius=5
-        ).grid(row=1,column=0,sticky="w",padx=(0,24))
+        ctk.CTkCheckBox(s,text="Download cover/thumbnail",
+            variable=self.dl_thumb_var,font=self._f(),
+            text_color=t["text"],fg_color=t["accent"],
+            hover_color=t["accent_hover"],border_color=t["border"],corner_radius=5
+        ).grid(row=4,column=0,columnspan=2,sticky="w",padx=(0,12))
 
         self.embed_thumb_var=ctk.BooleanVar(value=True)
-        ctk.CTkCheckBox(opt_inner,text="Embed cover in audio/video file",
-            variable=self.embed_thumb_var,
-            font=ctk.CTkFont(family=FF,size=12),text_color=t["text"],
-            fg_color=t["accent"],hover_color=t["accent_hover"],
-            border_color=t["border"],corner_radius=5
-        ).grid(row=1,column=1,sticky="w")
+        ctk.CTkCheckBox(s,text="Embed cover in file",
+            variable=self.embed_thumb_var,font=self._f(),
+            text_color=t["text"],fg_color=t["accent"],
+            hover_color=t["accent_hover"],border_color=t["border"],corner_radius=5
+        ).grid(row=4,column=2,columnspan=2,sticky="w")
 
-        # ── Card 3: Folder & Naming ──────────────────────────────────────────
-        c2=ctk.CTkFrame(self.content,fg_color=t["surface"],corner_radius=14,
+        # ── Folders & naming (one card) ──────────────────────────────────────
+        c2=ctk.CTkFrame(self.content,fg_color=t["surface"],corner_radius=12,
             border_color=t["border"],border_width=1)
-        c2.grid(row=cr,column=0,sticky="we",padx=24,pady=(8,0)); cr+=1
+        c2.grid(row=cr,column=0,sticky="we",padx=16,pady=(4,0)); cr+=1
 
         n=ctk.CTkFrame(c2,fg_color=t["surface"])
-        n.pack(fill="x",padx=18,pady=12)
+        n.pack(fill="x",padx=12,pady=8)
         n.grid_columnconfigure(1,weight=1)
 
-        # ── Folder structure ─────────────────────────────────────────────────
-        self._heading(n,"Folder Structure").grid(row=0,column=0,sticky="w",
-            columnspan=6,pady=(0,6))
+        self._heading(n,"Folders & File Names").grid(row=0,column=0,columnspan=2,
+            sticky="w",pady=(0,4))
 
-        # Playlist folder
         self.use_pl_folder=ctk.BooleanVar(value=True)
-        ctk.CTkCheckBox(n,text="Playlist folder:",variable=self.use_pl_folder,
-            font=ctk.CTkFont(family=FF,size=12),text_color=t["text"],
+        ctk.CTkCheckBox(n,text="Playlist folder",variable=self.use_pl_folder,
+            font=self._f(0.95,"bold"),text_color=t["text"],
             fg_color=t["accent"],hover_color=t["accent_hover"],
             border_color=t["border"],corner_radius=5,
-            command=self._on_folder).grid(row=1,column=0,sticky="w",padx=(0,6))
+            command=self._on_folder).grid(row=1,column=0,sticky="w",pady=(0,2))
 
         self.pl_folder_var=ctk.StringVar(value=DEFAULT_FOLDER_TMPL)
         self.pl_folder_entry=ctk.CTkEntry(n,textvariable=self.pl_folder_var,
-            height=28,font=ctk.CTkFont(family=MF,size=12),
+            height=self._h(1.4),font=self._f(0.95,mono=True),
             fg_color=t["surface2"],border_color=t["border"],
             text_color=t["text"],corner_radius=8)
-        self.pl_folder_entry.grid(row=1,column=1,sticky="we",padx=(0,6),columnspan=5)
+        self.pl_folder_entry.grid(row=1,column=1,sticky="we",pady=(0,2))
         self.pl_folder_entry.bind("<KeyRelease>",lambda _: self._upd_preview())
 
-        # Token row for playlist folder
-        self.pl_tok_frame=self._tok_buttons(n,self.pl_folder_entry,self.pl_folder_var,self._upd_preview)
-        self.pl_tok_frame.grid(row=2,column=0,columnspan=6,sticky="w",pady=(2,6))
+        self.pl_tok_frame=self._tok_buttons(n,self.pl_folder_entry,
+            self.pl_folder_var,self._upd_preview)
+        self.pl_tok_frame.grid(row=2,column=0,columnspan=2,sticky="we",pady=(0,4))
 
-        # Episode subfolder
         self.use_ep_folder=ctk.BooleanVar(value=False)
-        ctk.CTkCheckBox(n,text="Episode subfolder:",variable=self.use_ep_folder,
-            font=ctk.CTkFont(family=FF,size=12),text_color=t["text"],
+        ctk.CTkCheckBox(n,text="Episode subfolder",variable=self.use_ep_folder,
+            font=self._f(0.95,"bold"),text_color=t["text"],
             fg_color=t["accent"],hover_color=t["accent_hover"],
             border_color=t["border"],corner_radius=5,
-            command=self._on_folder).grid(row=3,column=0,sticky="w",padx=(0,6))
+            command=self._on_folder).grid(row=3,column=0,sticky="w",pady=(0,2))
 
         self.ep_folder_var=ctk.StringVar(value=DEFAULT_EP_TMPL)
         self.ep_folder_entry=ctk.CTkEntry(n,textvariable=self.ep_folder_var,
-            height=28,font=ctk.CTkFont(family=MF,size=12),
+            height=self._h(1.4),font=self._f(0.95,mono=True),
             fg_color=t["surface2"],border_color=t["border"],
             text_color=t["text"],corner_radius=8)
-        self.ep_folder_entry.grid(row=3,column=1,sticky="we",padx=(0,6),columnspan=5)
+        self.ep_folder_entry.grid(row=3,column=1,sticky="we",pady=(0,2))
         self.ep_folder_entry.bind("<KeyRelease>",lambda _: self._upd_preview())
 
-        self.ep_tok_frame=self._tok_buttons(n,self.ep_folder_entry,self.ep_folder_var,self._upd_preview)
-        self.ep_tok_frame.grid(row=4,column=0,columnspan=6,sticky="w",pady=(2,6))
+        self.ep_tok_frame=self._tok_buttons(n,self.ep_folder_entry,
+            self.ep_folder_var,self._upd_preview)
+        self.ep_tok_frame.grid(row=4,column=0,columnspan=2,sticky="we",pady=(0,4))
 
-        ctk.CTkLabel(n,text="Single-video downloads skip subfolders automatically.",
-            font=ctk.CTkFont(family=FF,size=11),text_color=t["text_dim"]
-        ).grid(row=5,column=0,columnspan=6,sticky="w",pady=(0,6))
+        self._sep(n,5)
 
-        self._sep(n,6)
-
-        # ── File naming ──────────────────────────────────────────────────────
-        self._heading(n,"File Name").grid(row=7,column=0,sticky="w",
-            columnspan=6,pady=(0,6))
+        preset_row=ctk.CTkFrame(n,fg_color=t["surface"])
+        preset_row.grid(row=6,column=0,columnspan=2,sticky="w",pady=(0,4))
+        ctk.CTkLabel(preset_row,text="File presets:",font=self._f(0.85),
+            text_color=t["text_dim"]).pack(side="left",padx=(0,6))
+        for label,tmpl in FILE_PRESETS:
+            ctk.CTkButton(preset_row,text=label,height=self._h(1.2),
+                font=self._f(0.85),fg_color=t["tag_bg"],hover_color=t["accent"],
+                text_color=t["tag_text"],corner_radius=6,
+                command=lambda tm=tmpl: (self.file_var.set(tm),self._upd_preview())
+            ).pack(side="left",padx=2)
 
         tmpl_row=ctk.CTkFrame(n,fg_color=t["surface"])
-        tmpl_row.grid(row=8,column=0,columnspan=6,sticky="we")
+        tmpl_row.grid(row=7,column=0,columnspan=2,sticky="we")
         tmpl_row.grid_columnconfigure(0,weight=1)
 
         self.file_var=ctk.StringVar(value=DEFAULT_FILE_TMPL)
-        self.file_entry=ctk.CTkEntry(tmpl_row,textvariable=self.file_var,height=30,
-            font=ctk.CTkFont(family=MF,size=13),fg_color=t["surface2"],
-            border_color=t["border"],text_color=t["text"],corner_radius=8)
+        self.file_entry=ctk.CTkEntry(tmpl_row,textvariable=self.file_var,
+            height=self._h(1.5),font=self._f(1.0,mono=True),
+            fg_color=t["surface2"],border_color=t["border"],
+            text_color=t["text"],corner_radius=8)
         self.file_entry.grid(row=0,column=0,sticky="we",padx=(0,6))
         self.file_entry.bind("<KeyRelease>",lambda _: self._upd_preview())
 
-        ctk.CTkButton(tmpl_row,text="Reset",width=55,height=30,corner_radius=8,
-            font=ctk.CTkFont(family=FF,size=11),fg_color=t["surface2"],
+        ctk.CTkButton(tmpl_row,text="Reset",width=self._sz(3.2),height=self._h(1.5),
+            corner_radius=8,font=self._f(0.85),fg_color=t["surface2"],
             hover_color=t["border"],text_color=t["text_dim"],
             command=lambda: (self.file_var.set(DEFAULT_FILE_TMPL),self._upd_preview())
         ).grid(row=0,column=1)
 
-        self.file_tok_frame=self._tok_buttons(n,self.file_entry,self.file_var,self._upd_preview)
-        self.file_tok_frame.grid(row=9,column=0,columnspan=6,sticky="w",pady=(4,4))
+        self.file_tok_frame=self._tok_buttons(n,self.file_entry,
+            self.file_var,self._upd_preview)
+        self.file_tok_frame.grid(row=8,column=0,columnspan=2,sticky="we",pady=(4,4))
 
-        # Preview
-        self.preview_lbl=ctk.CTkLabel(n,text="",
-            font=ctk.CTkFont(family=MF,size=11),text_color=t["accent2"],anchor="w")
-        self.preview_lbl.grid(row=10,column=0,columnspan=6,sticky="w",pady=(2,0))
+        ctk.CTkLabel(n,text="Preview:",font=self._f(0.8),
+            text_color=t["text_dim"]).grid(row=9,column=0,sticky="nw",pady=(2,0))
+        self.preview_lbl=ctk.CTkLabel(n,text="",font=self._f(0.9,mono=True),
+            text_color=t["accent2"],anchor="w",justify="left")
+        self.preview_lbl.grid(row=9,column=1,sticky="w",pady=(2,0))
 
         # ── Toolbar ──────────────────────────────────────────────────────────
         tb=ctk.CTkFrame(self.content,fg_color=t["bg"])
-        tb.grid(row=cr,column=0,sticky="we",padx=24,pady=(10,3)); cr+=1
+        tb.grid(row=cr,column=0,sticky="we",padx=16,pady=(6,2)); cr+=1
         tb.grid_columnconfigure(2,weight=1)
 
-        ctk.CTkButton(tb,text="Select All",width=85,height=26,corner_radius=8,
-            font=ctk.CTkFont(family=FF,size=12),fg_color=t["surface2"],
+        ctk.CTkButton(tb,text="Select All",width=self._sz(4.5),height=self._h(1.3),
+            corner_radius=8,font=self._f(),fg_color=t["surface2"],
             hover_color=t["border"],text_color=t["text"],
             command=self._sel_all).grid(row=0,column=0,padx=(0,4))
 
-        ctk.CTkButton(tb,text="Deselect",width=75,height=26,corner_radius=8,
-            font=ctk.CTkFont(family=FF,size=12),fg_color=t["surface2"],
+        ctk.CTkButton(tb,text="Deselect",width=self._sz(4),height=self._h(1.3),
+            corner_radius=8,font=self._f(),fg_color=t["surface2"],
             hover_color=t["border"],text_color=t["text"],
-            command=self._desel).grid(row=0,column=1,padx=(0,8))
+            command=self._desel).grid(row=0,column=1,padx=(0,6))
 
         self.count_lbl=ctk.CTkLabel(tb,text="0 / 0 selected",
-            font=ctk.CTkFont(family=FF,size=12),text_color=t["text_dim"])
+            font=self._f(),text_color=t["text_dim"])
         self.count_lbl.grid(row=0,column=2,sticky="w")
 
         self.total_lbl=ctk.CTkLabel(tb,text="",
-            font=ctk.CTkFont(family=FF,size=12,weight="bold"),text_color=t["accent2"])
+            font=self._f(1.0,"bold"),text_color=t["accent2"])
         self.total_lbl.grid(row=0,column=4,sticky="e")
-        ctk.CTkLabel(tb,text="Est. total:",
-            font=ctk.CTkFont(family=FF,size=12),text_color=t["text_dim"]
-        ).grid(row=0,column=3,sticky="e",padx=(0,4))
+        ctk.CTkLabel(tb,text="Est. total:",font=self._f(),
+            text_color=t["text_dim"]).grid(row=0,column=3,sticky="e",padx=(0,4))
 
         # ── Video list ───────────────────────────────────────────────────────
         self.list_box=ctk.CTkFrame(self.content,fg_color=t["surface"],
-            corner_radius=14,border_color=t["border"],border_width=1)
-        self.list_box.grid(row=cr,column=0,sticky="nswe",padx=24,pady=(3,16)); cr+=1
+            corner_radius=12,border_color=t["border"],border_width=1)
+        self.list_box.grid(row=cr,column=0,sticky="nswe",padx=16,pady=(2,8)); cr+=1
         self.list_box.grid_columnconfigure(0,weight=1)
         self.content.grid_rowconfigure(cr-1,weight=1)
 
         self.placeholder=ctk.CTkLabel(self.list_box,
             text="Paste a playlist URL above and press Fetch",
-            font=ctk.CTkFont(family=FF,size=14),text_color=t["text_dim"])
-        self.placeholder.grid(row=0,column=0,pady=50)
+            font=self._f(),text_color=t["text_dim"])
+        self.placeholder.grid(row=0,column=0,pady=30)
 
         self._on_set()
         self._on_folder()
@@ -735,14 +868,15 @@ class App(ctk.CTk):
         file_p=preview(self.file_var.get(),pl=self._pl_title)
         fmt=self.fmt_var.get().lower()
         ext=fmt if is_audio(fmt.upper()) else VID_EXT.get(fmt.upper(),fmt)
-        path=""
+        lines=[]
         if self.use_pl_folder.get():
-            fp=preview(self.pl_folder_var.get(),pl=self._pl_title)
-            path+=sanitize(fp)+os.sep
+            fp=sanitize(preview(self.pl_folder_var.get(),pl=self._pl_title))
+            lines.append(f"📁 {fp}/")
         if self.use_ep_folder.get():
-            ep=preview(self.ep_folder_var.get(),pl=self._pl_title)
-            path+=sanitize(ep)+os.sep
-        self.preview_lbl.configure(text=f"→  {path}{file_p}.{ext}")
+            ep=sanitize(preview(self.ep_folder_var.get(),pl=self._pl_title))
+            lines.append(f"   └ {ep}/")
+        lines.append(f"📄 {file_p}.{ext}")
+        self.preview_lbl.configure(text="\n".join(lines))
 
     def _on_folder(self):
         self.pl_folder_entry.configure(state="normal" if self.use_pl_folder.get() else "disabled")
@@ -879,28 +1013,54 @@ class App(ctk.CTk):
             color = t["success"]
 
         self._err_overlay = ctk.CTkFrame(self, fg_color=t["surface2"], border_color=color, border_width=2, corner_radius=10)
-        self._err_overlay.place(relx=0.98, rely=0.98, anchor="se")
+        self._err_overlay.place(relx=0.98, rely=0.06, anchor="ne")
 
-        ctk.CTkLabel(self._err_overlay, text=title, font=ctk.CTkFont(family=FF, size=15, weight="bold"), text_color=color).pack(pady=(12, 2), padx=20, anchor="w")
-        ctk.CTkLabel(self._err_overlay, text=msg, font=ctk.CTkFont(family=FF, size=12), text_color=t["text"], wraplength=250).pack(pady=(2, 12), padx=20, anchor="w")
+        ctk.CTkLabel(self._err_overlay, text=title, font=self._f(1.05, "bold"),
+            text_color=color).pack(pady=(12, 2), padx=20, anchor="w")
+        ctk.CTkLabel(self._err_overlay, text=msg, font=self._f(),
+            text_color=t["text"], wraplength=int(self._sz(14))).pack(pady=(2, 12), padx=20, anchor="w")
         
         self.after(3000, lambda: self._err_overlay.destroy() if hasattr(self, '_err_overlay') and self._err_overlay.winfo_exists() else None)
+
+    def _reset_playlist_for_fetch(self, placeholder_text="Loading playlist…"):
+        if hasattr(self, "_stat_prompt") and self._stat_prompt.winfo_exists():
+            self._stat_prompt.destroy()
+        self._entries = []
+        self._rows.clear()
+        self._pl_title = ""
+        self.count_lbl.configure(text="0 / 0 selected")
+        self.total_lbl.configure(text="")
+        if hasattr(self, "list_box") and self.list_box.winfo_exists():
+            for w in self.list_box.winfo_children():
+                w.destroy()
+            if placeholder_text:
+                t = self._t
+                self.placeholder = ctk.CTkLabel(
+                    self.list_box, text=placeholder_text,
+                    font=self._f(), text_color=t["text_dim"],
+                )
+                self.placeholder.grid(row=0, column=0, pady=50)
 
     def _on_fetch(self):
         url=self.url_entry.get().strip()
         if not url:
             self._show_overlay("No URL","Please enter a playlist URL.", False)
             return
-            
+        if self._downloading:
+            self._show_overlay("Busy", "Wait for the current download to finish.", False)
+            return
+
         url = self._clean_url(url)
         self.url_entry.delete(0, "end")
         self.url_entry.insert(0, url)
-        
+
+        self._fetch_gen += 1
+        self._active_fetch_gen = self._fetch_gen
+        self._reset_playlist_for_fetch()
+
         self.fetch_btn.configure(text="Loading…",state="disabled")
         self._current_fetch_url = url
         self._current_fetch_start = 1
-        self._entries = []
-        self._pl_title = ""
         self._fetch_chunk()
 
     def _fetch_chunk(self):
@@ -909,6 +1069,7 @@ class App(ctk.CTk):
         threading.Thread(target=self._fetch_chunk_w,args=(self._current_fetch_url, start, end),daemon=True).start()
 
     def _fetch_chunk_w(self, url, start, end):
+        gen = self._active_fetch_gen
         opts={"quiet":True,"no_warnings":True,"extract_flat":"in_playlist","skip_download":True,"yes_playlist":True,
               "playliststart": start, "playlistend": end}
         try:
@@ -916,7 +1077,8 @@ class App(ctk.CTk):
                 info=y.extract_info(url,download=False)
         except Exception as e:
             err_msg = str(e)
-            self.after(0,lambda m=err_msg: self._fetch_err(m)); return
+            self.after(0, lambda m=err_msg, g=gen: self._fetch_err(m) if g == self._active_fetch_gen else None)
+            return
             
         entries=info.get("entries")
         chunk_len = 0
@@ -933,19 +1095,22 @@ class App(ctk.CTk):
         entries = [e for e in entries if e is not None]
             
         if not entries and start == 1:
-            self.after(0,lambda: self._fetch_err("No videos found.")); return
-            
+            self.after(0, lambda g=gen: self._fetch_err("No videos found.") if g == self._active_fetch_gen else None)
+            return
+
         resolved=[{
             "title":e.get("title","Untitled"),
             "url":e.get("url") or e.get("webpage_url") or
                   f"https://www.youtube.com/watch?v={e.get('id','')}",
             "duration":e.get("duration"),"id":e.get("id",""),
         } for e in entries]
-        
-        self.after(0,lambda: self._append_and_check(resolved, pl, chunk_len))
+
+        self.after(0, lambda r=resolved, p=pl, c=chunk_len, g=gen:
+            self._append_and_check(r, p, c) if g == self._active_fetch_gen else None)
 
     def _fetch_err(self,msg):
         self.fetch_btn.configure(text="Fetch",state="normal")
+        self._reset_playlist_for_fetch("Paste a playlist URL above and press Fetch")
         self._show_overlay("Error",msg, True)
         
         err_lower = msg.lower()
@@ -974,8 +1139,7 @@ class App(ctk.CTk):
         self.pl_lbl = ctk.CTkLabel(
             self.inner_list,
             text=f"{self._pl_title}  ·  {len(self._entries)} videos",
-            font=ctk.CTkFont(family=FF, size=14, weight="bold"),
-            text_color=t["accent2"],
+            font=self._f(1.0, "bold"), text_color=t["accent2"],
         )
         self.pl_lbl.grid(row=0, column=0, sticky="w", padx=10, pady=(6, 4))
 
@@ -985,7 +1149,7 @@ class App(ctk.CTk):
             idx = start_index + i
             r = VideoRow(
                 self.inner_list, idx, e["title"], e["duration"], e["url"],
-                self._upd_count, t,
+                self._upd_count, t, font_pt=self._font_pt,
             )
             r.grid(row=idx + 1, column=0, sticky="we", padx=4, pady=1)
             self._rows.append(r)
@@ -1004,16 +1168,22 @@ class App(ctk.CTk):
         self.pl_lbl.configure(text=f"{self._pl_title}  ·  {len(self._entries)} videos")
 
         self._add_playlist_rows(resolved, new_start)
+        for r in self._rows[new_start:new_start + len(resolved)]:
+            r.set_sel(True)
 
         self._upd_count(); self._upd_preview()
-        
+
         if chunk_len >= 50:
             self.fetch_btn.configure(text="Waiting…")
             self._show_stationary_prompt()
         else:
             self.fetch_btn.configure(text="Fetch",state="normal")
             if self._entries:
-                threading.Thread(target=self._fetch_first_info,args=(self._entries[0]["url"],),daemon=True).start()
+                info_url = self._entries[0]["url"]
+                gen = self._active_fetch_gen
+                threading.Thread(
+                    target=self._fetch_first_info, args=(info_url, gen), daemon=True,
+                ).start()
 
     def _show_stationary_prompt(self):
         t = self._t
@@ -1023,18 +1193,32 @@ class App(ctk.CTk):
         self._stat_prompt = ctk.CTkFrame(self.list_box, fg_color=t["surface2"], border_color=t["accent"], border_width=2, corner_radius=10)
         self._stat_prompt.place(relx=0.5, rely=0.96, anchor="s")
         
-        ctk.CTkLabel(self._stat_prompt, text=f"{len(self._entries)} items fetched. Continue fetching?", font=ctk.CTkFont(family=FF, size=13, weight="bold"), text_color=t["text"]).pack(side="left", padx=(20, 10), pady=12)
-        
-        ctk.CTkButton(self._stat_prompt, text="Keep Top", width=90, height=28, corner_radius=8, fg_color=t["surface"], hover_color=t["border"], font=ctk.CTkFont(family=FF, size=12), text_color=t["text"], command=self._keep_top).pack(side="left", padx=(5, 5), pady=12)
-        
-        ctk.CTkButton(self._stat_prompt, text="Continue Fetch", width=110, height=28, corner_radius=8, fg_color=t["accent"], hover_color=t["accent_hover"], font=ctk.CTkFont(family=FF, size=12, weight="bold"), text_color=t["text"], command=self._continue_fetch).pack(side="left", padx=(5, 20), pady=12)
+        ctk.CTkLabel(self._stat_prompt,
+            text=f"{len(self._entries)} items fetched. Continue fetching?",
+            font=self._f(1.0, "bold"), text_color=t["text"]
+        ).pack(side="left", padx=(16, 8), pady=10)
+
+        ctk.CTkButton(self._stat_prompt, text="Keep Top", width=self._sz(5),
+            height=self._h(1.4), corner_radius=8, fg_color=t["surface"],
+            hover_color=t["border"], font=self._f(), text_color=t["text"],
+            command=self._keep_top).pack(side="left", padx=4, pady=10)
+
+        ctk.CTkButton(self._stat_prompt, text="Continue Fetch", width=self._sz(6),
+            height=self._h(1.4), corner_radius=8, fg_color=t["accent"],
+            hover_color=t["accent_hover"], font=self._f(1.0, "bold"),
+            text_color=t["text"], command=self._continue_fetch
+        ).pack(side="left", padx=(4, 16), pady=10)
 
     def _keep_top(self):
         if hasattr(self, '_stat_prompt') and self._stat_prompt.winfo_exists():
             self._stat_prompt.destroy()
         self.fetch_btn.configure(text="Fetch", state="normal")
         if self._entries:
-            threading.Thread(target=self._fetch_first_info,args=(self._entries[0]["url"],),daemon=True).start()
+            info_url = self._entries[0]["url"]
+            gen = self._active_fetch_gen
+            threading.Thread(
+                target=self._fetch_first_info, args=(info_url, gen), daemon=True,
+            ).start()
 
     def _continue_fetch(self):
         if hasattr(self, '_stat_prompt') and self._stat_prompt.winfo_exists():
@@ -1043,7 +1227,7 @@ class App(ctk.CTk):
         self._current_fetch_start += 50
         self._fetch_chunk()
 
-    def _fetch_first_info(self, url):
+    def _fetch_first_info(self, url, fetch_gen=None):
         opts={"quiet":True,"no_warnings":True,"skip_download":True}
         try:
             with yt_dlp.YoutubeDL(opts) as y:
@@ -1066,7 +1250,13 @@ class App(ctk.CTk):
                 im = im.resize((int(w*ratio), int(h*ratio)), Image.Resampling.LANCZOS)
                 ctk_im = ctk.CTkImage(im, size=im.size)
             
-            self.after(0, lambda: self._rows[0].set_hover_info(ctk_im, txt) if self._rows else None)
+            def _apply():
+                if fetch_gen is not None and fetch_gen != self._active_fetch_gen:
+                    return
+                if not self._rows or self._rows[0].url != url:
+                    return
+                self._rows[0].set_hover_info(ctk_im, txt)
+            self.after(0, _apply)
         except Exception:
             pass # ignore hover fetch errors
 
